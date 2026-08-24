@@ -10,7 +10,10 @@
   脚本内部自动换算为 gazebo 世界坐标（map = gazebo + (1.995, 0.514)）。
 
 用法（需先启动导航）:
-    ros2 run tb3_patrol spawn_obstacle --x 2.0 --y 0.5
+    # 动态避障: 在去第3个目标点(wp3)的必经之路「东缝隙」(地图 2.545,0.514) 投放障碍,
+    # 机器人接近时自动投放 -> 识别到不硬闯 -> 自动重规划改走西缝隙(较远路线)绕行
+    ros2 run tb3_patrol spawn_obstacle --watch 2.545 0.514
+    # 或手动指定坐标: ros2 run tb3_patrol spawn_obstacle --x 2.545 --y 0.514
 """
 import math
 import os
@@ -134,8 +137,9 @@ def main(args=None):
 
     if '--watch' in sys.argv:
         # 监控模式: 等机器人接近目标点后投放（watch_and_spawn 内部已完成投放）
-        wx = 1.5
-        wy = 1.8
+        # 默认投放点 = 去 wp3 的必经之路「东缝隙」(map 坐标), 机器人识别到会自动改走西缝隙绕行
+        wx = 2.545
+        wy = 0.514
         if len(sys.argv) > sys.argv.index('--watch') + 2:
             wx = float(sys.argv[sys.argv.index('--watch') + 1])
             wy = float(sys.argv[sys.argv.index('--watch') + 2])

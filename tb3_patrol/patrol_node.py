@@ -23,6 +23,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
@@ -244,27 +245,31 @@ class PatrolNode(Node):
         self.get_logger().warn('等待 AMCL 定位超时')
         return False
 
-    def _wait_bt_navigator_active(self, timeout=90.0):
-        """等待 bt_navigator 生命周期变为 ACTIVE(通过 transition_event 话题)。
-        wait_for_server 只保证 Action Server 在监听, 不保证节点已激活 ——
-        激活前发目标会被拒绝(Goal rejected)!"""
-        from lifecycle_msgs.msg import TransitionEvent
-        ev = {'active': False}
-        def _cb(msg):
-            # State.id: 3 = PRIMARY_STATE_ACTIVE
-            if msg.goal_state.id == 3:
-                ev['active'] = True
-        sub = self.create_subscription(TransitionEvent, '/bt_navigator/transition_event', _cb, 10)
+    def _wait_bt_navigator_active(self, timeout=60.0):
+        """等待 bt_navigator 生命周期变为 ACTIVE(通过 get_state 服务轮询)。
+        说明: 之前用 transition_event 话题监听, 但它是 VOLATILE 无缓存、
+        依赖订阅时机恰好覆盖激活瞬间 —— 存在竞态(订阅晚于激活就漏掉)。
+        改为轮询 get_state 服务: 返回当前真实状态, 无论何时查询都准确, 确定性可靠。"""
+        from lifecycle_msgs.srv import GetState
+        cli = self.create_client(GetState, '/bt_navigator/get_state')
+        # 等服务就绪
+        if not cli.wait_for_service(timeout_sec=10.0):
+            self.get_logger().error('/bt_navigator/get_state 服务不可用')
+            return False
         start = time.time()
         while rclpy.ok() and time.time() - start < timeout:
-            if ev['active']:
-                break
-            rclpy.spin_once(self, timeout_sec=0.5)
-        self.destroy_subscription(sub)
-        if ev['active']:
-            self.get_logger().info('bt_navigator 已激活(ACTIVE)')
-            return True
+            req = GetState.Request()
+            fut = cli.call_async(req)
+            rclpy.spin_until_future_complete(self, fut, timeout_sec=3.0)
+            if fut.result() is not None:
+                # id: 1=unconfigured 2=inactive 3=active 4=finalized
+                if fut.result().current_state.id == 3:
+                    self.get_logger().info('bt_navigator 已激活(ACTIVE)')
+                    self.destroy_client(cli)
+                    return True
+            time.sleep(0.5)
         self.get_logger().warn('等待 bt_navigator 激活超时')
+        self.destroy_client(cli)
         return False
 
     def run(self):
