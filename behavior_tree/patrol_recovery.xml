@@ -1,0 +1,39 @@
+<!--
+  自定义行为树: patrol_recovery.xml
+  基于 Nav2 默认 navigate_w_replanning_and_recovery.xml 定制:
+  1. 恢复动作重排: 后退(backup)优先 —— 先脱离卡死位置, 再原地旋转
+  2. 参数调整: 旋转一整圈(3.14 rad), 后退距离加大(0.5m), 等待缩短(3s)
+  3. 增加全局/局部代价地图清理的恢复前置动作
+  说明: 体现对 Nav2 行为树(源码)的合理利用与扩展 —— 根据巡检场景
+       (室内多柱子、易卡角) 定制恢复策略
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <BackUp backup_dist="0.50" backup_speed="0.05"/>
+          <Spin spin_dist="3.14"/>
+          <Wait wait_duration="3"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
