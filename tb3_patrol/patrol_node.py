@@ -35,6 +35,10 @@ import yaml
 # 卡死检测参数
 STUCK_TIMEOUT = 15.0     # 15 秒无有效移动判定为卡死
 STUCK_MIN_MOVE = 0.05    # 15 秒内移动 < 0.05m 视为无进展
+# odom -> map 偏移(实测: map = odom + 该偏移); 用于判断机器人是否已接近目标
+MAP_TO_ODOM_OFFSET = (1.995, 0.514)
+# 机器人距目标点小于该值即视为"已到达"(避免把到达后的静止误判为卡死)
+GOAL_ARRIVED_DIST = 0.30
 MAX_RETRIES = 3          # 每个目标点最多重试次数
 RELOCO_WAIT = 6.0        # 重新全局定位后等待收敛时间
 
@@ -122,6 +126,7 @@ class PatrolNode(Node):
             last_move_time = time.time()
             stuck_check_count = 0
             last_printed = 1e9
+            min_near_goal = [False]  # 是否因"已接近目标"而跳出
 
             while not nav.isTaskComplete():
                 # --- 反馈打印（稀疏） ---
@@ -143,6 +148,20 @@ class PatrolNode(Node):
                         last_pos = cur_pos
                         last_move_time = time.time()
                     elif time.time() - last_move_time > STUCK_TIMEOUT:
+                        # 关键: 先判断是否其实已接近目标点(在到达容差内)——
+                        # 机器人到目标附近停下是正常到达, 不是卡死
+                        goal_dist = 1e9
+                        if cur_pos is not None and goal.pose.position is not None:
+                            cur_map = (cur_pos[0] + MAP_TO_ODOM_OFFSET[0],
+                                       cur_pos[1] + MAP_TO_ODOM_OFFSET[1])
+                            goal_dist = math.hypot(
+                                cur_map[0] - goal.pose.position.x,
+                                cur_map[1] - goal.pose.position.y)
+                        if goal_dist < GOAL_ARRIVED_DIST:
+                            self.get_logger().info(
+                                f'    已接近目标点 ({goal_dist:.2f}m)，视为到达')
+                            min_near_goal[0] = True
+                            break
                         stuck_check_count += 1
                         if stuck_check_count >= 3:
                             self.get_logger().warn(
@@ -154,6 +173,9 @@ class PatrolNode(Node):
             # 任务完成
             if nav.isTaskComplete():
                 return nav.getResult()
+            if min_near_goal[0]:
+                self.get_logger().info('目标点判定为已到达')
+                return TaskResult.SUCCEEDED
 
             # 卡死: 取消当前任务 + 重新全局定位 + 重试
             self.get_logger().warn('取消当前导航任务 ...')
