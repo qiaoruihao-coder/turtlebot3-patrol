@@ -186,18 +186,69 @@ class PatrolNode(Node):
         self._cmd_vel_pub.publish(Twist())  # 停转
         self.get_logger().info(f'[巡检行为] 旋转完成, 继续下一目标')
 
+    def _wait_amcl_subscriber(self, timeout=150.0):
+        """等待 AMCL 订阅 /initialpose（等价于 AMCL 已激活）。
+        纯话题检测, 绕开 waitUntilNav2Active() 的 get_state 服务偶发超时卡死"""
+        start = time.time()
+        while rclpy.ok() and time.time() - start < timeout:
+            if self.initial_pose_pub.get_subscription_count() > 0:
+                return True
+            rclpy.spin_once(self, timeout_sec=0.5)
+        self.get_logger().warn('等待 AMCL 订阅 /initialpose 超时')
+        return False
+
+    def _wait_amcl_pose(self, timeout=60.0):
+        """等待 AMCL 发布 /amcl_pose（初始定位完成）。
+        注意 QoS: AMCL 用 TRANSIENT_LOCAL + RELIABLE 发布, 默认 VOLATILE 订阅会收不到!"""
+        from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
+        qos = QoSProfile(
+            depth=10,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        got = {'ok': False}
+        def _cb(msg):
+            got['ok'] = True
+        sub = self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', _cb, qos)
+        start = time.time()
+        while rclpy.ok() and time.time() - start < timeout:
+            if got['ok']:
+                break
+            rclpy.spin_once(self, timeout_sec=0.5)
+        self.destroy_subscription(sub)
+        if got['ok']:
+            self.get_logger().info('AMCL 初始定位完成')
+            return True
+        self.get_logger().warn('等待 AMCL 定位超时')
+        return False
+
     def run(self):
         nav = BasicNavigator()
 
-        # 等待 Nav2 启动就绪
-        self.get_logger().info('等待 Nav2 激活 ...')
-        nav.waitUntilNav2Active()
+        # 等待 Nav2 就绪（纯话题检测, 避免服务调用偶发卡死）
+        self.get_logger().info('等待 Nav2 就绪(AMCL 订阅 /initialpose) ...')
+        self._wait_amcl_subscriber()
+
+        # 等待机器人 odom 可用 —— 关键! 确保 gazebo 已完成生成、odom TF 已发布,
+        # 否则初始位姿的 TF 查询会失败 (sim 时间早于机器人生成时刻)
+        self.get_logger().info('等待机器人 odom(确认已生成) ...')
+        start = time.time()
+        while rclpy.ok() and time.time() - start < 90.0:
+            if self._odom_pos is not None:
+                self.get_logger().info(f'机器人已生成, odom 位置: ({self._odom_pos[0]:.2f}, {self._odom_pos[1]:.2f})')
+                break
+            rclpy.spin_once(self, timeout_sec=0.5)
+        if self._odom_pos is None:
+            self.get_logger().error('等待机器人生成超时, 中止巡检')
+            return False
 
         # ---------- 代码驱动：自动设置初始位姿 ----------
         ip = self.config.get('initial_pose', {})
         initial_pose_msg = PoseWithCovarianceStamped()
         initial_pose_msg.header.frame_id = 'map'
-        initial_pose_msg.header.stamp = self.get_clock().now().to_msg()
+        # 时间戳必须用 0(使用最新 TF): 本节点用系统时钟, 若打系统时间戳,
+        # AMCL 按仿真时间查 TF 会报 "extrapolation into the future" 导致定位失败
+        initial_pose_msg.header.stamp = rclpy.time.Time().to_msg()
         initial_pose_msg.pose.pose.position.x = float(ip.get('x', 0.0))
         initial_pose_msg.pose.pose.position.y = float(ip.get('y', 0.0))
         q = yaw_to_quaternion(math.radians(float(ip.get('yaw', 0.0))))
@@ -207,10 +258,31 @@ class PatrolNode(Node):
         initial_pose_msg.pose.covariance[0] = 0.25
         initial_pose_msg.pose.covariance[7] = 0.25
         initial_pose_msg.pose.covariance[35] = 0.06853891945200942
-        self.initial_pose_pub.publish(initial_pose_msg)
-        self.get_logger().info(
-            f'已发布初始位姿 (x={ip.get("x")}, y={ip.get("y")}, yaw={ip.get("yaw")}°)'
-        )
+
+        # 多重发布 + 重试, 确保 AMCL 收到（FastDDS 一次性消息可能丢失）
+        localized = False
+        for attempt in range(1, 4):
+            for _ in range(5):
+                self.initial_pose_pub.publish(initial_pose_msg)
+                time.sleep(0.5)
+            self.get_logger().info(
+                f'已发布初始位姿 (x={ip.get("x")}, y={ip.get("y")}, yaw={ip.get("yaw")}°), 第 {attempt}/3 轮'
+            )
+            if self._wait_amcl_pose(timeout=30.0):
+                localized = True
+                break
+            self.get_logger().warn('AMCL 未定位, 重发初始位姿 ...')
+
+        if not localized:
+            self.get_logger().error('AMCL 定位失败, 中止巡检')
+            return False
+
+        self.get_logger().info('Nav2 就绪, 开始巡检')
+        # 确保导航 Action Server 就绪（bt_navigator 激活）后再发目标
+        if not nav.nav_to_pose_client.wait_for_server(timeout_sec=30.0):
+            self.get_logger().error('navigate_to_pose Action Server 不可用, 中止巡检')
+            return False
+        self.get_logger().info('导航服务器就绪')
 
         # ---------- 顺序巡检 ----------
         waypoints = self.config['waypoints']
