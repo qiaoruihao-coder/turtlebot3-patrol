@@ -25,6 +25,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Twist
 from std_srvs.srv import Empty
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from ament_index_python.packages import get_package_share_directory
@@ -56,6 +57,8 @@ class PatrolNode(Node):
         # odom 订阅（卡死检测用）
         self._odom_pos = None
         self.odom_sub = self.create_subscription(Odometry, '/odom', self._odom_cb, 10)
+        # 巡检行为: 原地旋转用
+        self._cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
     def _odom_cb(self, msg):
         self._odom_pos = (msg.pose.pose.position.x, msg.pose.pose.position.y)
@@ -159,6 +162,30 @@ class PatrolNode(Node):
 
         return last_result if last_result is not None else TaskResult.FAILED
 
+    def _patrol_behavior(self, wp_name):
+        """巡检行为（加分项）: 到达目标点后停留数秒, 并原地旋转一周扫描"""
+        pb = self.config.get('patrol_behavior', {})
+        dwell = float(pb.get('dwell_time', 3.0))
+        self.get_logger().info(f'[巡检行为] {wp_name}: 停留 {dwell}s 观察 ...')
+        time.sleep(dwell)
+        if pb.get('spin_rotation', True):
+            dur = float(pb.get('spin_duration', 4.0))
+            self.get_logger().info(f'[巡检行为] {wp_name}: 原地旋转 360° 扫描 ({dur}s) ...')
+            self._spin_in_place(dur)
+
+    def _spin_in_place(self, duration=4.0):
+        """原地旋转一整圈: 角速度 = 2π / duration
+        注意: 用 time.sleep 而非 create_rate().sleep() ——
+        rate.sleep() 依赖节点时钟, 在 rclpy 偶发挂起; time.sleep 走系统时钟绝对可靠"""
+        twist = Twist()
+        twist.angular.z = 2.0 * math.pi / duration
+        end = time.time() + duration
+        while rclpy.ok() and time.time() < end:
+            self._cmd_vel_pub.publish(twist)
+            time.sleep(0.05)  # ~20Hz
+        self._cmd_vel_pub.publish(Twist())  # 停转
+        self.get_logger().info(f'[巡检行为] 旋转完成, 继续下一目标')
+
     def run(self):
         nav = BasicNavigator()
 
@@ -203,6 +230,8 @@ class PatrolNode(Node):
             if result == TaskResult.SUCCEEDED:
                 ok_count += 1
                 self.get_logger().info(f'[{i}/{total}] ✅ 成功到达 {name}')
+                # 巡检行为: 到达后停留 + 原地旋转一周（加分项）
+                self._patrol_behavior(name)
             elif result == TaskResult.CANCELED:
                 self.get_logger().warn(f'[{i}/{total}] ❌ {name} 任务被取消')
             else:

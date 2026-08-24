@@ -96,6 +96,7 @@ tb3_patrol/
 - [x] TurtleBot3 仿真环境搭建（gazebo + cartographer + nav2）
 - [x] 手动建图并保存
 - [x] 代码驱动的 3 目标点自主导航（顺序巡检）
+- [x] **巡检行为：到达每个目标点后停留 3s + 原地旋转 360° 扫描**（可配置）
 - [x] 巡检进度实时日志 + 成功/失败统计
 - [x] 导航失败自动 Recovery（spin/backup/wait/drive_on_heading + 卡死检测重定位）
 - [x] 动态障碍物避障演示（三种投放方式）

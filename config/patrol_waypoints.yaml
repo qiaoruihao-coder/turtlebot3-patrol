@@ -31,3 +31,9 @@ waypoints:
     x: 3.8
     y: 0.8
     yaw: 0.0
+
+# 巡检行为（加分项）: 到达目标点后的动作
+patrol_behavior:
+  dwell_time: 3.0        # 到达后停留(秒)
+  spin_rotation: true    # 是否原地旋转一周扫描
+  spin_duration: 4.0     # 旋转一周时长(秒)
