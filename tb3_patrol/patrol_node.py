@@ -222,6 +222,29 @@ class PatrolNode(Node):
         self.get_logger().warn('等待 AMCL 定位超时')
         return False
 
+    def _wait_bt_navigator_active(self, timeout=90.0):
+        """等待 bt_navigator 生命周期变为 ACTIVE(通过 transition_event 话题)。
+        wait_for_server 只保证 Action Server 在监听, 不保证节点已激活 ——
+        激活前发目标会被拒绝(Goal rejected)!"""
+        from lifecycle_msgs.msg import TransitionEvent
+        ev = {'active': False}
+        def _cb(msg):
+            # State.id: 3 = PRIMARY_STATE_ACTIVE
+            if msg.goal_state.id == 3:
+                ev['active'] = True
+        sub = self.create_subscription(TransitionEvent, '/bt_navigator/transition_event', _cb, 10)
+        start = time.time()
+        while rclpy.ok() and time.time() - start < timeout:
+            if ev['active']:
+                break
+            rclpy.spin_once(self, timeout_sec=0.5)
+        self.destroy_subscription(sub)
+        if ev['active']:
+            self.get_logger().info('bt_navigator 已激活(ACTIVE)')
+            return True
+        self.get_logger().warn('等待 bt_navigator 激活超时')
+        return False
+
     def run(self):
         nav = BasicNavigator()
 
@@ -283,6 +306,10 @@ class PatrolNode(Node):
             self.get_logger().error('navigate_to_pose Action Server 不可用, 中止巡检')
             return False
         self.get_logger().info('导航服务器就绪')
+        # 关键: 等 bt_navigator 生命周期 ACTIVE, 否则目标会被拒绝
+        if not self._wait_bt_navigator_active():
+            self.get_logger().error('bt_navigator 未激活, 中止巡检')
+            return False
 
         # ---------- 顺序巡检 ----------
         waypoints = self.config['waypoints']
