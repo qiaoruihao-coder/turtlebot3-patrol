@@ -66,7 +66,9 @@ class ObstacleSpawner(Node):
         return gx, gy
 
     def watch_and_spawn(self, mx, my, trigger_dist=2.0):
-        """监控模式: 机器人(地图坐标)距目标点 < trigger_dist 米时投放"""
+        """监控模式: 机器人(地图坐标)距目标点 < trigger_dist 米时投放。
+        实测: 触发距 0.6/1.5m 时障碍物过近会把机器人困在柱阵缝里导致卡死;
+        2.0m 最稳(机器人识别到障碍不硬闯, 自动重规划走较远路线绕行)。"""
         target_gx = mx - MAP_TO_GAZEBO_OFFSET[0]
         target_gy = my - MAP_TO_GAZEBO_OFFSET[1]
         self.get_logger().info(
