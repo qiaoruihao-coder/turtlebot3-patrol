@@ -99,17 +99,41 @@ class ObstacleSpawner(Node):
         return False
 
     def spawn_box(self, gx, gy, name='dynamic_obstacle'):
-        while not self.spawn_cli.wait_for_service(timeout_sec=3.0):
-            self.get_logger().info('等待 /spawn_entity 服务 ...')
-        req = SpawnEntity.Request()
-        req.name = name
-        req.xml = self._box_sdf(gx, gy)
-        future = self.spawn_cli.call_async(req)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
-        if future.result() is None:
-            self.get_logger().error('spawn 服务调用失败')
-            return False
-        return future.result().success
+        """投放障碍箱。若同名旧实体已存在则先删除, FastDDS 偶发超时自动重试 3 次。"""
+        for attempt in range(1, 4):
+            while not self.spawn_cli.wait_for_service(timeout_sec=3.0):
+                self.get_logger().info('等待 /spawn_entity 服务 ...')
+            # 先删除同名旧实体(上次运行可能残留), 避免 "already exists" 被拒
+            self._delete_existing(name)
+            req = SpawnEntity.Request()
+            req.name = name
+            req.xml = self._box_sdf(gx, gy)
+            future = self.spawn_cli.call_async(req)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
+            if future.result() is None:
+                self.get_logger().warn(f'spawn 服务调用超时(第 {attempt}/3 次), 重试 ...')
+                time.sleep(1.0)
+                continue
+            if future.result().success:
+                return True
+            self.get_logger().warn(f'spawn 被拒绝(第 {attempt}/3 次): {future.result().status_message}')
+            time.sleep(1.0)
+        self.get_logger().error('spawn 服务调用失败(已重试 3 次)')
+        return False
+
+    def _delete_existing(self, name='dynamic_obstacle'):
+        """删除同名旧实体(若存在)。失败/不存在都静默忽略。"""
+        try:
+            while not self.delete_cli.wait_for_service(timeout_sec=2.0):
+                pass
+            req = DeleteEntity.Request()
+            req.name = name
+            fut = self.delete_cli.call_async(req)
+            rclpy.spin_until_future_complete(self, fut, timeout_sec=5.0)
+            if fut.result() is not None and fut.result().success:
+                self.get_logger().info(f'已删除残留实体 [{name}]')
+        except Exception:
+            pass
 
     def _box_sdf(self, gx, gy):
         """红色 0.25m 立方体障碍物（gazebo 世界坐标）"""
