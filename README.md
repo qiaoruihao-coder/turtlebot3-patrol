@@ -60,6 +60,8 @@ ros2 launch tb3_patrol patrol.launch.py
 
 启动后无需任何手动操作：自动设置初始位姿 → 依次访问 3 个目标点 → 打印巡检结果。
 
+> ⚠️ **RViz 没有地图怎么办**：先 `ros2 lifecycle get /map_server`，若显示 `finalized [4]` 说明 map_server 生命周期加载失败（FastDDS 偶发 bug）。**重启整个仿真即可**：停掉当前 launch（Ctrl+C）→ `bash ~/clean_dds.sh` → 重新 `ros2 launch`。正常时 map_server 应为 `active [3]` 且 `/map` 话题有发布者。
+
 ### 4. 动态避障演示（加分项 + 录屏）
 
 **完整演示流程（录视频时照这个顺序执行）：**
@@ -86,6 +88,8 @@ ros2 run tb3_patrol spawn_obstacle --x 2.545 --y 0.514
 # 方法三: 自动投放 —— 在机器人正前方 1.2m 处投放
 ros2 run tb3_patrol spawn_obstacle --auto
 ```
+
+> 💡 **spawn_obstacle 已内置防故障**：投放前自动删除残留同名实体（避免 "already exists" 被拒）、服务偶发超时自动重试 3 次。正常时日志依次出现 `已删除残留实体` → `✅ 障碍物已生成`；若仍报"投放失败"，多半是仿真世界里已有同名箱子，重跑一次即可（脚本会自动删除重建）。
 
 > 💡 若 RViz 里出现旋转错位的"重影"色块，那只是局部代价地图图层未对齐的显示（不影响导航）。已默认关闭 `Local Costmap`/`Downsampled Costmap` 图层避免该现象。
 
