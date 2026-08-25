@@ -15,9 +15,9 @@
 
 ## 🚀 运行方法
 
-### ⭐ 一键启动全部（最推荐，录屏/演示直接用这个）
+### ⭐ 快速开始：一键启动（推荐）
 
-> **一条命令搞定全部**：自动清理残留进程 → 清理 FastDDS → 设置环境变量 → 启动 Gazebo 仿真 + Nav2 导航 + 巡检节点，全程无需手动操作。（等价于下面第 3、4 节所有手动步骤的打包）
+> **一条命令搞定全部**：自动清理残留进程 → 清理 FastDDS → 设置环境变量 → 启动 Gazebo 仿真 + Nav2 导航 + 巡检节点，全程无需手动操作。
 
 **终端 A —— 一键启动巡检：**
 
@@ -25,20 +25,22 @@
 bash ~/start_patrol.sh
 ```
 
-**终端 B —— 动态避障投放：**
+启动后无需任何手动操作：自动设置初始位姿 → 依次访问 3 个目标点 → 打印巡检结果。
+
+**终端 B（可选）—— 动态避障投放**（做动态避障演示时才需要，投放时机自己控制）：
 
 ```bash
 source ~/turtlebot3_ws/setup_env.sh
 ros2 run tb3_patrol spawn_obstacle --watch 2.545 0.514
 ```
 
-> - `--watch 2.545 0.514` = 等机器人接近投放点 (2.545, 0.514) 时**自动投放**障碍物（演示主力）。`ros2 run` 启动需 15~40s 才就绪，可以自己定好时机再启动投放。
-> - 想立即投放：把终端 B 的最后一条换成 `ros2 run tb3_patrol spawn_obstacle --x 2.545 --y 0.514`。
+> `--watch 2.545 0.514`：等机器人接近投放点 (2.545, 0.514) 时**自动投放**障碍物（演示主力）。`ros2 run` 启动需 15~40s 才就绪，自己定好时机再启动即可。想立即投放则用 `--x 2.545 --y 0.514`，更多投放方式见下文「动态避障演示」。
 
-### 1. 一次性环境准备
+### 1. 一次性准备（首次使用前做一次）
+
+**编译工作空间：**
 
 ```bash
-# 编译工作空间
 cd ~/turtlebot3_ws
 colcon build --symlink-install
 
@@ -48,7 +50,7 @@ export ROS_DOMAIN_ID=30
 export ROS_LOCALHOST_ONLY=1
 ```
 
-### 2. 建图（一次性）
+**建图**（Cartographer 激光 SLAM，键盘遥控扫图并保存，导航依赖这张地图）：
 
 ```bash
 # 终端1: 启动仿真
@@ -64,48 +66,52 @@ ros2 run turtlebot3_teleop teleop_keyboard
 ros2 run nav2_map_server map_saver_cli -f ~/map
 ```
 
-### 3. 一键自主巡检（核心）
+### 2. 手动启动（不使用一键脚本时的等价操作）
 
-**每次运行仿真前，先清理 FastDDS 残留**（多次运行后 `/dev/shm/fastrtps_*` 累积，会导致地图/Nav2 偶发加载失败、RViz 不显示地图）：
+`start_patrol.sh` 实际就是下面两步 + 环境设置的打包，不想用脚本时手动执行效果相同：
+
+**步骤 1 —— 清理 FastDDS 残留**（多次运行后 `/dev/shm/fastrtps_*` 累积，会导致地图/Nav2 偶发加载失败、RViz 不显示地图）：
 
 ```bash
 bash ~/clean_dds.sh
 ```
 
-然后一键启动（单条命令：Gazebo + Nav2 + 巡检节点，全程代码驱动）：
+**步骤 2 —— 启动巡检**（单条命令：Gazebo + Nav2 + 巡检节点，全程代码驱动）：
 
 ```bash
 ros2 launch tb3_patrol patrol.launch.py
 ```
-
-启动后无需任何手动操作：自动设置初始位姿 → 依次访问 3 个目标点 → 打印巡检结果。
 
 > ⚠️ **RViz 没有地图怎么办**：先 `ros2 lifecycle get /map_server`，若显示 `finalized [4]` 说明 map_server 生命周期加载失败（FastDDS 偶发 bug）。**重启整个仿真即可**：停掉当前 launch（Ctrl+C）→ `bash ~/clean_dds.sh` → 重新 `ros2 launch`。正常时 map_server 应为 `active [3]` 且 `/map` 话题有发布者。
 
-### 4. 动态避障演示（加分项 + 录屏）
+### 3. 动态避障演示（加分项 + 录屏）
 
 **完整演示流程（录视频时照这个顺序执行）：**
 
-**步骤 1（终端 A）—— 清理 + 一键启动巡检：**
+**步骤 1（终端 A）—— 一键启动巡检：**
+
 ```bash
-bash ~/clean_dds.sh
-ros2 launch tb3_patrol patrol.launch.py
+bash ~/start_patrol.sh
 ```
 
-**步骤 2（终端 B）** —— 动态避障投放：
+**步骤 2（终端 B）—— 动态避障投放**（投放时机自己控制）：
+
 ```bash
+source ~/turtlebot3_ws/setup_env.sh
 # 智能监控: 等机器人接近投放点时自动投放（演示主力, 推荐）
 # 投放点 (2.545, 0.514) = 去 wp3 的必经缝隙(东), 机器人会自动绕西缝隙(较远路线)
 ros2 run tb3_patrol spawn_obstacle --watch 2.545 0.514
 ```
+
 > ⚠️ `ros2 run` 启动需 15~40s 才就绪，可以自己定好时机再启动投放。
 
 **可选（替换步骤 2）的其他投放方式：**
+
 ```bash
 # 方法一: 手动指定投放点(地图坐标), 可换任意路径点
 ros2 run tb3_patrol spawn_obstacle --x 2.545 --y 0.514
 
-# 方法三: 自动投放 —— 在机器人正前方 1.2m 处投放
+# 方法二: 自动投放 —— 在机器人正前方 1.2m 处投放
 ros2 run tb3_patrol spawn_obstacle --auto
 ```
 
